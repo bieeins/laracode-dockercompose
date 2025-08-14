@@ -1,0 +1,3 @@
+@echo off
+echo Accessing PHP container...
+docker-compose exec php bash

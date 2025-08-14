@@ -1,0 +1,125 @@
+# version: '3.8'
+
+services:
+  # Web Server (Nginx)
+  webserver:
+    image: nginx:alpine
+    container_name: ${APP_NAME:-myapp}_webserver
+    restart: unless-stopped
+    ports:
+      - "${NGINX_PORT:-8000}:80"  # Ubah ke port 8000 untuk menghindari konflik
+    volumes:
+      - ./src:/var/www/html:cached  # cached untuk performa di macOS
+      - ./docker/nginx/conf.d:/etc/nginx/conf.d:ro
+    depends_on:
+      - php
+    networks:
+      - app-network
+
+  # PHP-FPM
+  php:
+    build:
+      context: ./docker/php
+      dockerfile: Dockerfile
+      args:
+        PHP_VERSION: ${PHP_VERSION:-8.2}
+    container_name: ${APP_NAME:-myapp}_php
+    restart: unless-stopped
+    volumes:
+      - ./src:/var/www/html:cached
+      - ./docker/php/local.ini:/usr/local/etc/php/conf.d/local.ini:ro
+    environment:
+      - DB_HOST=${DB_HOST:-mysql}
+      - DB_PORT=${DB_PORT:-3306}
+      - DB_DATABASE=${DB_DATABASE:-db_laravel}
+      - DB_USERNAME=${DB_USERNAME:-appuser}
+      - DB_PASSWORD=${DB_PASSWORD:-secret}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - app-network
+
+  # MySQL Database
+  mysql:
+    image: mysql:${MYSQL_VERSION:-8.0}
+    container_name: ${APP_NAME:-myapp}_mysql
+    restart: unless-stopped
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"  # Ubah ke 3307 untuk menghindari konflik
+    environment:
+    # Root user configuration
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootsecret}
+      
+      # Regular user configuration
+      MYSQL_DATABASE: ${DB_DATABASE:-laravel}
+      MYSQL_USER: ${DB_USERNAME:-appuser}        # Regular user (bukan root)
+      MYSQL_PASSWORD: ${DB_PASSWORD:-secret}     # Password untuk regular user
+      # Security settings
+      MYSQL_ALLOW_EMPTY_PASSWORD: "no"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/my.cnf:/etc/mysql/conf.d/my.cnf:ro
+      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+    networks:
+      - app-network
+
+  # Redis
+  redis:
+    image: redis:${REDIS_VERSION:-7-alpine}
+    container_name: ${APP_NAME:-myapp}_redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6380}:6379"  # Ubah ke 6380
+    volumes:
+      - redis_data:/data
+    networks:
+      - app-network
+
+  # phpMyAdmin
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    container_name: ${APP_NAME:-myapp}_phpmyadmin
+    restart: unless-stopped
+    ports:
+      - "${PHPMYADMIN_PORT:-8080}:80"
+    environment:
+      PMA_HOST: mysql
+      PMA_PORT: 3306
+      # Gunakan root untuk phpMyAdmin
+      PMA_USER: root
+      PMA_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootsecret}
+      # Allow login dengan user biasa juga
+      PMA_ARBITRARY: 1
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - app-network
+
+  # Mailhog
+  mailhog:
+    image: mailhog/mailhog
+    container_name: ${APP_NAME:-myapp}_mailhog
+    restart: unless-stopped
+    ports:
+      - "${MAILHOG_PORT:-8025}:8025"
+      - "${MAILHOG_SMTP_PORT:-1025}:1025"
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  mysql_data:
+    driver: local
+  redis_data:
+    driver: local
